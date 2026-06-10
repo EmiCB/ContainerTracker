@@ -1,12 +1,13 @@
-name: ContainerTracker
+name: WHIMC-Container-Tracker
 version: '${project.version}'
 main: com.emicb.containertracker.ContainerTracker
-api-version: 1.20
+api-version: '1.21'
 depend: [ProtocolLib]
+softdepend: [WorldGuard]
 commands:
   ct-toggle-debug:
-    description: toggles debug mode for ContainerTracker
+    description: toggles debug mode for WHIMC-Container-Tracker
     usage: /<command>
   puzzle-progress:
-    description: allows players to see what puzzles others have solved
-    usage: /<command>
+    description: shows which barrelbot puzzles a player has completed this session
+    usage: /<command> <player>

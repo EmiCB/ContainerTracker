@@ -2,12 +2,11 @@ package com.emicb.containertracker.utils.sql;
 
 import com.emicb.containertracker.ContainerTracker;
 import com.emicb.containertracker.utils.Utils;
-import net.minecraft.nbt.CompoundTag;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
 import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.craftbukkit.v1_20_R3.inventory.CraftItemStack;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -15,6 +14,10 @@ import java.sql.*;
 
 import java.util.function.Consumer;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import static java.sql.DriverManager.getConnection;
 
 /**
  * Handles storing position data
@@ -22,6 +25,10 @@ import java.util.logging.Logger;
  * @author Sam
  */
 public class Queryer {
+
+    private static final int CHEST_SIZE = 27;
+    private static final Pattern BARRELBOT_INSTRUCTION =
+            Pattern.compile("instruction:\\s*['\"]?([^'\"\\r\\n]+)['\"]?");
 
     //Query for inserting skills into the database.
     private static final String QUERY_SAVE_INVENTORY =
@@ -84,7 +91,6 @@ public class Queryer {
         ItemStack[] contents = inventory.getContents();
         String inventoryType = inventory.getType().name();
         Location inventoryLocation = inventory.getLocation();
-        final int CHEST_SIZE = 27;
         statement.setString(1, player.getUniqueId().toString());
         statement.setString(2, player.getName());
         statement.setString(3, inventoryLocation.getWorld().getName());
@@ -94,59 +100,18 @@ public class Queryer {
         statement.setLong(7, System.currentTimeMillis());
         for (int i = 0; i < contents.length; i++) {
             ItemStack item = contents[i];
-            //Safety check for larger chests can't store in our db
-            if(i >= CHEST_SIZE){
+            if (i >= CHEST_SIZE) {
                 if (config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " is larger than what can be stored in the db and won't be tracked");
-                }
-                net.minecraft.world.item.ItemStack nmsItem = CraftItemStack.asNMSCopy(item);
-                CompoundTag tag = nmsItem.getTag();
-                if (item == null && config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " has: nothing");
-                } else if (tag != null && config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " has: " + tag);
-                } else {
-                    if (config.getBoolean("debug")) {
-                        log.info("[ContainerTracker] slot " + i + " has: " + nmsItem);
-                    }
+                    log.info("[WHIMC-Container-Tracker] slot " + i + " is larger than what can be stored in the db and won't be tracked");
                 }
                 continue;
             }
 
-            if (item == null) {
-                if (config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " has: nothing");
-                }
-                statement.setString(i+8, null);
-                continue;
+            String slotValue = itemToStorageString(item);
+            if (config.getBoolean("debug")) {
+                log.info("[WHIMC-Container-Tracker] slot " + i + " has: " + slotValue);
             }
-            net.minecraft.world.item.ItemStack nmsItem = CraftItemStack.asNMSCopy(item);
-            CompoundTag tag = nmsItem.getTag();
-            if(tag != null){
-                //Parse nbttag as string ex: {CustomModelData:130000,barrelbot:{instruction:"move_forward"},display:{Lore:['{"text":"Moves the barrelbot forward","color":"gray","italic":false}','{"text":"1 tile, if it is open","color":"gray","italic":false}','{"text":" "}','{"text":"Instruction","color":"blue","italic":false}'],Name:'{"text":"Move Forward","color":"#FFAA00","italic":false}'}}
-                String text = "";
-                final String BARRELBOTKEY = "barrelbot";
-                final String INSTRUCTIONKEY = "instruction";
-                if(tag.contains(BARRELBOTKEY)) {
-                    CompoundTag barrelbot = tag.getCompound(BARRELBOTKEY);
-                    if (barrelbot.contains(INSTRUCTIONKEY)) {
-                        text = barrelbot.getString(INSTRUCTIONKEY);
-                    } else {
-                        text = barrelbot.toString();
-                    }
-                } else {
-                    text = tag.toString();
-                }
-                if (config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " has: " + text);
-                }
-                statement.setString(i + 8, text);
-            } else {
-                if (config.getBoolean("debug")) {
-                    log.info("[ContainerTracker] slot " + i + " has: " + nmsItem);
-                }
-                statement.setString(i + 8, nmsItem.toString());
-            }
+            statement.setString(i + 8, slotValue);
         }
         statement.setString(35, inventoryType);
         statement.setString(36, regionNames);
@@ -253,7 +218,7 @@ public class Queryer {
      * @return the generated PreparedStatement
      * @throws SQLException
      */
-    private PreparedStatement insertPhysicalInteraction(Connection connection, Player player, Block clickedBlock, String regionNames) throws SQLException {
+    private PreparedStatement insertPhysicalInteraction(Connection connection, Player player, Block clickedBlock, String regionNames, String interactionTypeOverride) throws SQLException {
         PreparedStatement statement = connection.prepareStatement(QUERY_SAVE_ACTION_PHYSICAL, Statement.RETURN_GENERATED_KEYS);
 
         statement.setString(1, player.getUniqueId().toString());
@@ -263,7 +228,16 @@ public class Queryer {
         statement.setDouble(5, player.getLocation().getY());
         statement.setDouble(6, player.getLocation().getZ());
         statement.setLong(7, System.currentTimeMillis());
-        statement.setString(8, clickedBlock.getType().toString());
+
+        // ✅ Use the override if provided, else fall back to block type or "AIR CLICK"
+        if (interactionTypeOverride != null) {
+            statement.setString(8, interactionTypeOverride);
+        } else if (clickedBlock != null) {
+            statement.setString(8, clickedBlock.getType().toString());
+        } else {
+            statement.setString(8, "AIR CLICK");
+        }
+
         statement.setString(9, regionNames);
         return statement;
     }
@@ -271,7 +245,7 @@ public class Queryer {
     public void logNewPhysicalInteraction(Player player, Block clickedBlock, String regionNames) {
         async(() -> {
             try (Connection connection = this.sqlConnection.getConnection()) {
-                try (PreparedStatement statement = insertPhysicalInteraction(connection, player, clickedBlock, regionNames)) {
+                try (PreparedStatement statement = insertPhysicalInteraction(connection, player, clickedBlock, regionNames, null)) {
                     String query = statement.toString().substring(statement.toString().indexOf(" ") + 1);
                     Utils.debug(" " + query);
                     statement.executeUpdate();
@@ -284,6 +258,16 @@ public class Queryer {
             }
         });
     }
+
+    public void logNewPhysicalInteraction(Player player, String interactionTypeOverride, String regionNames) {
+        try (Connection connection = this.sqlConnection.getConnection()) {
+            PreparedStatement statement = insertPhysicalInteraction(connection, player, null, regionNames, interactionTypeOverride);
+            statement.executeUpdate();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
 
     private void loadTemporaryInventoryID(String query, Consumer<PreparedStatement> prepare, Consumer<Integer> callback) {
         async(() -> {
@@ -314,5 +298,29 @@ public class Queryer {
 
     private void async(Runnable runnable) {
         Bukkit.getScheduler().runTaskAsynchronously(this.plugin, runnable);
+    }
+
+    private String itemToStorageString(ItemStack item) {
+        if (item == null || item.getType().isAir()) {
+            return null;
+        }
+
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("item", item);
+        String serialized = yaml.saveToString();
+
+        if (serialized.contains("barrelbot")) {
+            Matcher matcher = BARRELBOT_INSTRUCTION.matcher(serialized);
+            if (matcher.find()) {
+                return matcher.group(1).trim();
+            }
+            return serialized.trim();
+        }
+
+        if (item.hasItemMeta()) {
+            return serialized.trim();
+        }
+
+        return item.getType().name();
     }
 }

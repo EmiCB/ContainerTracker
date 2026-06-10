@@ -1,109 +1,162 @@
-# ContainerTracker
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/EmiCB/LockBar?label=Download&logo=github)](https://github.com/EmiCB/ContainerTracker/releases/latest)
+# WHIMC-Container-Tracker
 
-A Minecraft plugin to track the contents (items and their positions) of container inventories. 
-It will also track [physical actions](https://hub.spigotmc.org/javadocs/spigot/org/bukkit/event/block/Action.html).
+**Version:** 1.4.0  
+**Minecraft:** 1.21.11 (Spigot/Paper API `1.21.11-R0.1-SNAPSHOT`)
 
-## Building
-Compile a `.jar` from the commandline by doing an `install` via Maven:
-```
-$ mvn install
-```
-It should show up in the `target` directory. Make sure to update the version number.
+A WHIMC Minecraft plugin that logs container inventories and player physical interactions to MySQL. It is used alongside other WHIMC data-collection plugins (for example WHIMC-StudentFeedback) that read the tables this plugin writes.
 
----
+## Download
+
+Grab the latest built jar from the [latest release](https://github.com/whimc/WHIMC-ContainerTracker/releases/latest). A new release is published automatically on every push to `main`, and the version number in `pom.xml` is bumped by 0.1 after each release (for example 1.4.0 → 1.4.1).
+
+The release artifact is named `WHIMC-Container-Tracker-<version>.jar`. On the server, plugin configuration is stored in `plugins/WHIMC-Container-Tracker/`.
+
+## Prerequisites
+
+- Minecraft **1.21.11** server (Spigot or Paper)
+- **JDK 21** on the build machine; the server runtime also requires Java 21 for 1.21.x
+- **ProtocolLib** (required)
+- **WorldGuard** (required at runtime for region names on logged events)
+- **MySQL** database reachable from the server
+
+See also [WHIMC Server Documentation](https://docs.google.com/document/d/1T7UQParX9wVa3cVV-rwUFM5pJ7poIgMXGPR2lR-aAuo/edit?tab=t.0#bookmark=id.725lg2utykbb).
+
+## What This Plugin Tracks
+
+| Category | Trigger | Stored in |
+|---|---|---|
+| Barrel / shulker contents | Player closes a barrel or shulker box inventory | `whimc_containers` |
+| Physical blocks | Player steps on or clicks pressure plates, levers, or buttons | `whimc_action_physical` |
+| Air clicks | Player left-clicks empty space (each click is a separate row) | `whimc_action_physical` (`type`: `AIR CLICK`) |
+| Player punches | Player damages another player (requires PvP enabled) | `whimc_action_physical` (`type`: `PUNCH <target>`) |
+| Player deaths | Player dies | `whimc_action_physical` (`type`: `DEATH <cause>`) |
+| Barrelbot puzzle success | Server chat message containing `[Barrelbot]` (via ProtocolLib) | `whimc_barrelbot_outcome` |
+| In-session puzzle counts | Barrelbot success messages while the server is running | In-memory only (used by `/puzzle-progress`) |
+
+For container slots, barrelbot instruction items store the instruction name (for example `move_forward`). Other items store serialized item metadata from the Bukkit YAML representation, or the material name when no meta is present.
 
 ## Commands
 
-| Command            | Description        |
-|--------------------|--------------------|
-| `/ct-toggle-debug` | toggles debug mode |
-
-Note: planning to refactor the command structure and possibly add more commands as needed 
+| Command | Usage | Description |
+|---|---|---|
+| `/ct-toggle-debug` | `/ct-toggle-debug` | Toggles debug mode in `config.yml` (also logs extra detail to the server console) |
+| `/puzzle-progress` | `/puzzle-progress <player>` | Lists barrelbot puzzles the given online player has completed on the current world during this server session |
 
 ## Config
-### General
-| Key            | Type           | Description                                        |
-|----------------|----------------|----------------------------------------------------|
-| `debug`        | `boolean`      | enable / disable debug mode                        |
 
-####Example
+Config file: `plugins/WHIMC-Container-Tracker/config.yml`
+
+### General
+
+| Key | Type | Description |
+|---|---|---|
+| `debug` | `boolean` | Enable / disable debug mode |
+
+Example:
+
 ```yaml
 debug: true
 ```
 
 ### MySQL
 
-| Key              | Type      | Description                     |
-|------------------|-----------|---------------------------------|
-| `mysql.host`     | `string`  | The host of the database        |
-| `mysql.port`     | `integer` | The port of the database        |
-| `mysql.database` | `string`  | The name of the database to use |
-| `mysql.username` | `string`  | Username for credentials        |
-| `mysql.password` | `string`  | Password for credentials        |
+| Key | Type | Description |
+|---|---|---|
+| `mysql.host` | `string` | Database host |
+| `mysql.port` | `integer` | Database port |
+| `mysql.database` | `string` | Database name |
+| `mysql.username` | `string` | Database username |
+| `mysql.password` | `string` | Database password |
 
-####Example
+Example:
+
 ```yaml
 mysql:
-    host: localhost
-    port: 3306
-    database: minecraft
-    username: user
-    password: pass
+  host: localhost
+  port: 3306
+  database: minecraft
+  username: user
+  password: pass
 ```
-## Database Tables
-### whimc_action_physical
-Tracks when and where players interact with pressure plates, levers, or buttons.
 
-| Column        | Type      | Description                                                                                       |
-|---------------|-----------|---------------------------------------------------------------------------------------------------|
-| `rowid`       | `int`     | Unique row id for db entry                                                                        |
-| `uuid`        | `string`  | UUID of player causing the interaction                                                            |
-| `username`    | `string`  | Name of the player causing the interaction                                                        |
-| `world`       | `string`  | Name of the world where the interaction occurred                                                  |
-| `x`           | `double`  | The x position of the interaction                                                                 |
-| `y`           | `double`  | The y position of the interaction (up/down height)                                                |
-| `z`           | `double`  | The z position of the interaction                                                                 |
-| `time`        | `big int` | The unix time stamp when the interaction occurred                                                 |
-| `type`        | `string`  | The type of block interacted with (pressure plate, lever, or button)                              |
-| `region_name` | `string`  | The names of the regions where the interaction took place (regions names are separated by spaces) |
+## Database Tables
+
+### whimc_action_physical
+
+Tracks player physical interactions and related events.
+
+| Column | Type | Description |
+|---|---|---|
+| `rowid` | `int` | Unique row id |
+| `uuid` | `string` | Player UUID |
+| `username` | `string` | Player name |
+| `world` | `string` | World name |
+| `x` | `double` | Player x position |
+| `y` | `double` | Player y position |
+| `z` | `double` | Player z position |
+| `time` | `bigint` | Unix timestamp (ms) |
+| `type` | `string` | Block type, `AIR CLICK`, `DEATH <cause>`, or `PUNCH <target>` |
+| `region_name` | `string` | WorldGuard region ids (space-separated) |
 
 ### whimc_barrelbot_outcome
-Tracks when and where players complete Barrelbot puzzles and the last inventory that they closed.
 
-| Column             | Type      | Description                                                                 |
-|--------------------|-----------|-----------------------------------------------------------------------------|
-| `rowid`            | `int`     | Unique row id for db entry                                                  |
-| `uuid`             | `string`  | UUID of player who completed the puzzle                                     |
-| `username`         | `string`  | Name of the player who completed the puzzle                                 |
-| `world`            | `string`  | Name of the world where the puzzle was completed                            |
-| `x`                | `double`  | The x position of the player                                                |
-| `y`                | `double`  | The y position of the player (up/down height)                               |
-| `z`                | `double`  | The z position of the player                                                |
-| `time`             | `big int` | The unix time stamp when the puzzle was completed                           |
-| `outcome`          | `string`  | The outcome of the puzzle (currently only has Success)                      |
-| `inventory_row_id` | `int`     | The last rowid in whimc_containers from the player before puzzle completion |
-| `puzzle_name`      | `string`  | The name of puzzle that the player completed                                |
+Tracks barrelbot puzzle completions detected from chat.
+
+| Column | Type | Description |
+|---|---|---|
+| `rowid` | `int` | Unique row id |
+| `uuid` | `string` | Player UUID |
+| `username` | `string` | Player name |
+| `world` | `string` | World name |
+| `x` | `double` | Player x position |
+| `y` | `double` | Player y position |
+| `z` | `double` | Player z position |
+| `time` | `bigint` | Unix timestamp (ms) |
+| `outcome` | `string` | Puzzle outcome (`Success` or `Failure`) |
+| `inventory_row_id` | `int` | Latest `whimc_containers.rowid` for the player before completion |
+| `puzzle_name` | `string` | Puzzle name from the barrelbot chat message |
 
 ### whimc_containers
-Tracks when and where players close a shulker or barrel and all the items that were in it when closed.
 
-| Column           | Type      | Description                                                                                     |
-|------------------|-----------|-------------------------------------------------------------------------------------------------|
-| `rowid`          | `int`     | Unique row id for db entry                                                                      |
-| `uuid`           | `string`  | UUID of player who closed an inventory                                                          |
-| `username`       | `string`  | Name of the player who closed an inventory                                                      |
-| `world`          | `string`  | Name of the world where the inventory was closed                                                |
-| `x`              | `double`  | The x position of the inventory                                                                 |
-| `y`              | `double`  | The y position of the inventory (up/down height)                                                |
-| `z`              | `double`  | The z position of the inventory                                                                 |
-| `time`           | `big int` | The unix time stamp when the inventory was closed                                               |
-| `slot1-27`       | `string`  | The name of the block in the inventory slot (1 is the top left and 27 is the bottom right)      |
-| `inventory_type` | `string`  | Name of the inventory (barrel or shulker)                                                       |
-| `region_name`    | `string`  | The names of the regions where the inventory is located (regions names are separated by spaces) |
+Tracks barrel and shulker box contents when the inventory is closed.
+
+| Column | Type | Description |
+|---|---|---|
+| `rowid` | `int` | Unique row id |
+| `uuid` | `string` | Player UUID |
+| `username` | `string` | Player name |
+| `world` | `string` | World name |
+| `x` | `double` | Container x position |
+| `y` | `double` | Container y position |
+| `z` | `double` | Container z position |
+| `time` | `bigint` | Unix timestamp (ms) |
+| `slot1`–`slot27` | `string` | Item data per slot (top-left = slot1, bottom-right = slot27) |
+| `inventory_type` | `string` | Inventory type (`BARREL` or shulker box type) |
+| `region_name` | `string` | WorldGuard region ids (space-separated) |
+
+## Building
+
+Requires JDK 21+.
+
+```bash
+mvn clean package
+```
+
+Output: `target/WHIMC-Container-Tracker-1.4.0.jar` (version matches `pom.xml`).
+
+## Releases
+
+Pushes to `main` trigger the GitHub Actions **Build and Release** workflow:
+
+1. Builds the jar at the current `pom.xml` version
+2. Creates a GitHub release tagged `v<version>` with the jar attached
+3. Commits a version bump (+0.1) to `pom.xml` for the next release
+
+To cut a release manually, run the workflow from the Actions tab (**workflow_dispatch**).
 
 ## Known Issues
-- Weighted pressure plates spam the database
-- Citizens can trigger physical interactions (working on an optional toggle for this)
-- Double chests ar not supported
-- Containers that are under the size of 27 slots throw an error and the contents do not get stored
+
+- Weighted pressure plates can spam the database
+- Citizens NPCs can trigger physical interactions (optional toggle planned)
+- Double chests are not supported
+- Containers with fewer than 27 slots may error and contents may not be stored
